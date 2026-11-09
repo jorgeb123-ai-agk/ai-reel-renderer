@@ -59,6 +59,8 @@ def pst(im, arr, pos):
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PHOTO_PATH = os.environ.get('PHOTO', os.path.join(HERE, 'assets', 'photo.jpg'))
+BRAND = 'Jorgeb_photography'                      # printed on the monitor's top bezel in every scene
+TITLE = os.environ.get('CINE_TITLE', 'SHUTTER SPEED')   # video title, shown on the monitor bezel (bottom)
 
 
 class _Scene:
@@ -271,7 +273,11 @@ def make_bezel():
     d.ellipse([382, 390, 398, 406], fill=(120, 255, 120))
     for k in range(6):
         d.line([60 + k * 18, 396, 60 + k * 18, 414], fill=(120, 108, 92), width=3)
-    d.text((240, 400), "SHUTTER-VISION", font=mono(15), fill=(104, 94, 80), anchor='mm')
+    ttl, fs = TITLE.upper(), 15
+    while fs > 9 and mono(fs).getlength(ttl) > 190:   # keep it between the vent slots and the power light
+        fs -= 1
+    d.text((240, 400), ttl, font=mono(fs), fill=(104, 94, 80), anchor='mm')
+    d.text((240, 27), BRAND, font=mono(15), fill=(104, 94, 80), anchor='mm')   # same font/colour as the bottom label
     return np.array(im)
 
 

@@ -23,6 +23,7 @@ Environment variables:
 - `CINE_END=21.93`  render only the first N seconds (trial cut)
 - `CINE_OUT=out/name.mp4`  output file
 - `PHOTO=/path/photo.jpg`  photo to use
+- `CINE_TITLE="SHUTTER SPEED"`  video title, printed on the monitor's bottom bezel (set this for every new video)
 - `MONO_FONT=/path/font.ttf`
 
 A full 41 s render takes about 10 minutes on 2 cores (about 0.34 s per frame per core).
@@ -52,6 +53,10 @@ ffmpeg -i out/master.mp4 -c:v libx264 -crf 17 -preset slow -pix_fmt yuv420p -c:a
 2. Run `stills.py` and look at the contact sheet before any long render.
 3. Trial cut with `CINE_END`, then one full render.
 4. With voice clips: set each scene's duration to the clip length plus ~0.3 s and align `WLINES` start times and sound events to the words.
+
+## Branding
+The monitor's top bezel always reads `Jorgeb_photography` (`BRAND` in `cine.py`), same font and spacing as the bottom label.
+The label on the monitor's bottom bezel is the video title (`CINE_TITLE` env var, default `SHUTTER SPEED`), auto-shrunk to fit.
 
 ## Look settings (approved; do not regress)
 Subtle blind-light stripes (wall `0.70 + 0.28*band`), film grain sigma 0.012, monitor scaled 1.10,
