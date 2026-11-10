@@ -40,22 +40,40 @@ def audio(path):
             buf[i:i + len(s)] += s * g
     for si in range(len(SC)):
         st = STARTS[si]
-        put(st, sfx.synth('whoosh'), 0.22 if si else 0.0)
-    put(OFF - 1.0, sfx.synth('whoosh'), 0.18)
+        put(st, sfx.synth('whoosh'), 0.13 if si else 0.0)
+    put(OFF - 1.0, sfx.synth('whoosh'), 0.11)
     # soft exhale while the person sighs
     n = int(0.9 * sr)
     ex = np.convolve(rs.randn(n), np.ones(30) / 30, 'same') * np.sin(np.pi * np.arange(n) / n) ** 2
-    put(1.0, ex, 0.10)
-    st = STARTS[1]
-    for k in (1, 2, 3):     # shutter-speed dial clicks as it steps up
-        put(st + 2.0 + k * 1.7 / 3.99, dial(rs), 1.0)
-    put(st + 3.7, sfx.synth('pop'), 0.45)
-    st = STARTS[3]
-    put(st + 1.15, sfx.synth('click'), 0.9)
-    put(st + 1.3, sfx.synth('ding'), 0.45)
-    put(STARTS[4] + 3.7, sfx.synth('pop'), 0.4)
-    put(STARTS[4] + 5.74, sfx.synth('pop'), 0.4)
-    put(STARTS[6] + 4.3, sfx.synth('ding'), 0.5)
+    put(OPEN + 1.0, ex, 0.10)
+    if OPEN > 0:
+        put(1.7, sfx.synth('whoosh'), 0.10)   # camera pan-in from the wide desk shot
+    if DAY == '1':
+        # slider moves click on their steps; pops where the green ok-labels land; ding on the reveal and the save
+        for st_, ts in ((STARTS[2], (1.55, 1.95, 2.35)), (STARTS[3], (1.2, 1.7, 2.2)),
+                        (STARTS[4], (0.6, 1.1, 1.6, 2.1, 2.6)), (STARTS[5], (1.0, 1.25, 1.5, 1.75))):
+            for tt in ts:
+                put(st_ + tt, dial(rs), 0.9)
+        for st_, tt in ((STARTS[1], 2.5), (STARTS[1], 3.3), (STARTS[1], 4.0)):
+            put(st_ + tt, sfx.synth('pop'), 0.30)
+        put(STARTS[2] + 4.3, sfx.synth('pop'), 0.4)
+        put(STARTS[3] + 3.6, sfx.synth('pop'), 0.4)
+        put(STARTS[4] + 3.0, sfx.synth('pop'), 0.4)
+        put(STARTS[6] + 0.2, sfx.synth('whoosh'), 0.11)
+        put(STARTS[6] + 2.3, sfx.synth('ding'), 0.45)
+        put(STARTS[7] + 2.6, sfx.synth('pop'), 0.4)
+        put(STARTS[7] + 3.0, sfx.synth('ding'), 0.5)
+    else:
+        st = STARTS[1]
+        for k in (1, 2, 3):     # shutter-speed dial clicks as it steps up
+            put(st + 2.0 + k * 1.7 / 3.99, dial(rs), 1.0)
+        put(st + 3.7, sfx.synth('pop'), 0.45)
+        st = STARTS[3]
+        put(st + 1.15, sfx.synth('click'), 0.9)
+        put(st + 1.3, sfx.synth('ding'), 0.45)
+        put(STARTS[4] + 3.7, sfx.synth('pop'), 0.4)
+        put(STARTS[4] + 5.74, sfx.synth('pop'), 0.4)
+        put(STARTS[6] + 4.3, sfx.synth('ding'), 0.5)
     buf = buf[:int(TOTAL * sr)]
     # fades
     n = int(0.5 * sr)
@@ -81,5 +99,5 @@ if __name__ == '__main__':
     run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', f'{d}/list.txt', '-c', 'copy', f'{d}/video.mp4'])
     audio(f'{d}/sfx.wav')
     run(['ffmpeg', '-y', '-loglevel', 'error', '-i', f'{d}/video.mp4', '-i', f'{d}/sfx.wav', '-map', '0:v', '-map', '1:a',
-         '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-shortest', '-movflags', '+faststart', os.environ.get('CINE_OUT', 'out/day2_shutter_speed_v4.mp4')])
+         '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-shortest', '-movflags', '+faststart', os.environ.get('CINE_OUT', 'out/day1_raw_vs_edit.mp4' if DAY == '1' else 'out/day2_shutter_speed_v4.mp4')])
     print('done')

@@ -6,8 +6,9 @@ import numpy as np, cv2
 from PIL import Image, ImageDraw, ImageFont
 
 W, H, FPS = 1080, 1920, 30
-SSF = 1.5   # 3D supersampling factor
-SS = 1.5    # CRT screen texture scale (1.0 = 800x600)
+HQ = os.environ.get('CINE_HQ') == '1'   # high-quality look: 2x supersampling, glass reflection, screen glow, wall prints, finer textures
+SSF = 2.0 if HQ else 1.5   # 3D supersampling factor
+SS = 2.0 if HQ else 1.5    # CRT screen texture scale (1.0 = 800x600)
 WS, HS = int(W * SSF), int(H * SSF)
 FL = 1300.0
 _MONO_CANDIDATES = [
@@ -49,6 +50,9 @@ class SD:
     def line(self, xy, fill=None, width=1):
         self.d.line(self._xy(xy), fill=fill, width=self._w(width))
 
+    def polygon(self, xy, fill=None):
+        self.d.polygon(self._xy(xy), fill=fill)
+
     def text(self, xy, s, font=None, fill=None, anchor=None):
         self.d.text(self._xy(xy), s, font=font, fill=fill, anchor=anchor)
 
@@ -58,9 +62,12 @@ def pst(im, arr, pos):
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+DAY = os.environ.get('CINE_DAY', '2')   # '2' = shutter speed (approved reference), '1' = raw vs edit
 PHOTO_PATH = os.environ.get('PHOTO', os.path.join(HERE, 'assets', 'photo.jpg'))
+RAW_PATH = os.environ.get('RAW_PHOTO', os.path.join(HERE, 'assets', 'raw.jpg'))       # day 1: unedited RAW export
+FINAL_PATH = os.environ.get('FINAL_PHOTO', os.path.join(HERE, 'assets', 'final.jpg'))  # day 1: the real final edit
 BRAND = 'Jorgeb_photography'                      # printed on the monitor's top bezel in every scene
-TITLE = os.environ.get('CINE_TITLE', 'SHUTTER SPEED')   # video title, shown on the monitor bezel (bottom)
+TITLE = os.environ.get('CINE_TITLE', 'RAW VS EDIT' if DAY == '1' else 'SHUTTER SPEED')   # video title, bottom bezel
 
 
 class _Scene:
@@ -71,8 +78,14 @@ class _Scene:
 # scene durations in seconds (problem, menu, bad result, fix, dark/ISO, trick, CTA).
 # When voice clips exist, replace these with clip length + ~0.3 s tail.
 SCENE_DURS = [3.91, 5.61, 5.61, 3.2, 9.01, 4.59, 5.27]
+# day 1 (raw vs edit): hook, the raw, white balance, shadows, contrast+color, "that's it", reveal, CTA
+D1_DURS = [3.2, 5.4, 5.8, 4.8, 4.1, 3.6, 4.2, 4.2]
+if DAY == '1':
+    SCENE_DURS = D1_DURS
 SC = [_Scene(d) for d in SCENE_DURS]
-OFF = 3.6   # intro shot before the original scenes
+INTRO = 3.6   # intro shot (person + editor) before the original scenes
+OPEN = 4.2 if HQ else 0.0   # HQ: wide establishing shot of the desk, then a slow pan-in, before the intro
+OFF = OPEN + INTRO
 STARTS = OFF + np.cumsum([0] + [s.dur for s in SC])
 TOTAL = float(os.environ.get('CINE_END', STARTS[-1]))
 NFR = int(round(TOTAL * FPS))
@@ -99,19 +112,26 @@ def sstep(a, b, x):
 # ------------------------------------------------------------------ camera
 KEYS = [
     (0.0, (-6, 113, 119), (-6, 112, 45)),
-    (OFF, (5, 114, 126), (0, 113, 45)),
-    (OFF + 3.91, (-3, 113, 118), (0, 112, 45)),
-    (OFF + 9.52, (2, 112, 112), (0, 112, 46)),
-    (OFF + 15.13, (-2, 112, 110), (0, 111, 46)),
-    (OFF + 18.33, (2, 112, 112), (0, 112, 46)),
-    (OFF + 27.34, (-3, 113, 118), (0, 113, 45)),
-    (OFF + 31.93, (0, 114, 122), (0, 113, 45)),
-    (OFF + 37.2, (0, 115, 134), (0, 114, 45)),
+    (INTRO, (5, 114, 126), (0, 113, 45)),
+    (INTRO + 3.91, (-3, 113, 118), (0, 112, 45)),
+    (INTRO + 9.52, (2, 112, 112), (0, 112, 46)),
+    (INTRO + 15.13, (-2, 112, 110), (0, 111, 46)),
+    (INTRO + 18.33, (2, 112, 112), (0, 112, 46)),
+    (INTRO + 27.34, (-3, 113, 118), (0, 113, 45)),
+    (INTRO + 31.93, (0, 114, 122), (0, 113, 45)),
+    (INTRO + 37.2, (0, 115, 134), (0, 114, 45)),
 ]
+if DAY == '1':   # stretch the camera path over this video's length (keys after the intro keep their relative timing)
+    _s = (STARTS[-1] - OFF) / 37.2
+    KEYS = [KEYS[0]] + [(INTRO + (k[0] - INTRO) * _s, k[1], k[2]) for k in KEYS[1:]]
+WIDE_P, WIDE_T = (-6, 110, 196), (-8, 105, 34)      # wide establishing view of the desk
+if HQ:   # hold the wide shot ~1 s, ease in to the intro framing, then follow the normal path (shifted by OPEN)
+    KEYS = [(0.0, WIDE_P, WIDE_T), (1.0, WIDE_P, WIDE_T)] + [(k[0] + OPEN, k[1], k[2]) for k in KEYS]
 _kt = np.array([k[0] for k in KEYS])
 _kv = np.array([list(k[1]) + list(k[2]) for k in KEYS], dtype=float)
-_km = _kv[1:].mean(0)
-_kv[1:] = _km + 0.6 * (_kv[1:] - _km)
+_k0 = 2 if HQ else 1   # keys before this index (the wide establishing shot) are not calmed
+_km = _kv[_k0:].mean(0)
+_kv[_k0:] = _km + 0.6 * (_kv[_k0:] - _km)
 
 
 def cam_path(t):
@@ -122,6 +142,8 @@ def cam_path(t):
     s = (t - _kt[i]) / dt
 
     def tang(j):
+        if HQ and j <= 2:
+            return np.zeros(6)
         a, b = max(j - 1, 0), min(j + 1, len(_kt) - 1)
         return (_kv[b] - _kv[a]) / (_kt[b] - _kt[a]) * dt * 0.8
 
@@ -173,6 +195,13 @@ def quad(cv, cam, tex, P, alpha=False, cull=True):
     if x1 - x0 < 2 or y1 - y0 < 2:
         return
     th, tw = tex.shape[:2]
+    if alpha:   # mip-style prefilter: bring props close to their on-screen size before the perspective warp
+        sw = max(np.hypot(*(pts[1] - pts[0])), np.hypot(*(pts[2] - pts[3])))
+        sh_ = max(np.hypot(*(pts[3] - pts[0])), np.hypot(*(pts[2] - pts[1])))
+        f = max(min(sw * 1.5 / tw, sh_ * 1.5 / th, 1.0), 0.1)
+        if f < 0.75:
+            tex = cv2.resize(tex, (max(int(tw * max(min(sw * 1.5 / tw, 1.0), 0.1)), 4), max(int(th * max(min(sh_ * 1.5 / th, 1.0), 0.1)), 4)), interpolation=cv2.INTER_AREA)
+            th, tw = tex.shape[:2]
     src = np.float32([[0, 0], [tw, 0], [tw, th], [0, th]])
     M = cv2.getPerspectiveTransform(src, (pts - [x0, y0]).astype(np.float32))
     w, h = x1 - x0, y1 - y0
@@ -197,8 +226,17 @@ def poly(cv, cam, P, color, center_normal):
     cv2.fillConvexPoly(cv, np.round(pts * 16).astype(np.int32), color, cv2.LINE_AA, 4)
 
 
+BLIND_STRIPES = False
+FILM_GRAIN = False     # True brings back the film grain over the room
+WALL_MOTTLE = False    # True brings back the blotchy plaster patches and fine grain on the wall
+
+
 # ------------------------------------------------------------------ textures (baked once)
 def blind_light(U, V, period, ang, phase=0.0, soft=0.07):
+    # Window-blind shadow stripes are switched off: return the stripes' average level, so brightness stays
+    # the same but the scene has soft, stripe-free light. Set BLIND_STRIPES = True to bring them back.
+    if not BLIND_STRIPES:
+        return np.full(np.broadcast(U, V).shape, 0.42, np.float32)
     a = math.radians(ang)
     u = (U * math.cos(a) + V * math.sin(a)) / period + phase
     ph = u % 1.0
@@ -212,28 +250,22 @@ def make_wall():
     X, Y = np.broadcast_arrays(x, y)
     rs = np.random.RandomState(1)
     noise = cv2.resize(rs.rand(26, 24).astype(np.float32), (X.shape[1], X.shape[0]), interpolation=cv2.INTER_CUBIC)
+    if not WALL_MOTTLE:
+        noise = np.full_like(noise, 0.5)
     base = np.array([176, 122, 88], np.float32)[None, None, :] * (0.93 + 0.14 * noise)[:, :, None]
     base *= (1 - 0.55 * np.clip((Y - 80) / 180, 0, 1))[:, :, None]
     band = blind_light(X, Y, 34.0, -33, 0.15, 0.24)
     env = 0.40 + 0.60 * sstep(-0.6, 0.9, (-(X + 25) * 0.012 + (Y - 120) * 0.0 + 0.55 - np.abs(Y - 130) * 0.004))
     light = 0.70 + 0.28 * band * env
-    # leaf shadows (right side) only matter where there is light
-    sh = np.zeros(X.shape, np.float32)
-    for k in range(26):
-        cx, cy = rs.uniform(48, 98), rs.uniform(95, 205)
-        ang = rs.uniform(-1.1, 1.1)
-        axes = (int(rs.uniform(9, 17) * px), int(rs.uniform(3, 5.5) * px))
-        c = (int((cx + 110) * px), int((260 - cy) * px))
-        cv2.ellipse(sh, c, axes, math.degrees(ang), 0, 360, 1.0, -1, cv2.LINE_AA)
-    cv2.line(sh, (int(158 * px), int((260 - 70) * px)), (int(190 * px), int((260 - 200) * px)), 1.0, 6)
-    sh = cv2.GaussianBlur(sh, (0, 0), 5)
-    light *= (1 - 0.82 * sh)
     # soft monitor shadow behind it
     ms = np.exp(-(((X - 6) / 34) ** 4 + ((Y - 104) / 30) ** 4))
     light *= (1 - 0.55 * ms)
     warm = np.stack([np.ones_like(light), 0.80 + 0.2 * (1 - light), 0.55 + 0.4 * (1 - light)], 2)
     tex = base * light[:, :, None] * (0.9 + 0.1 * warm) * 1.18
     tex = cv2.GaussianBlur(tex, (0, 0), 2.2)  # depth of field
+    if HQ and WALL_MOTTLE:   # fine plaster grain that survives the depth-of-field blur
+        fine = cv2.GaussianBlur(np.random.RandomState(9).randn(*tex.shape[:2]).astype(np.float32), (0, 0), 0.8)
+        tex = tex * (1 + 0.05 * fine)[:, :, None]
     return np.clip(tex, 0, 255).astype(np.uint8)
 
 
@@ -260,47 +292,92 @@ def make_desk():
 
 
 def make_bezel():
-    pxcm = 10
+    k = 2 if HQ else 1          # HQ draws the bezel texture at 2x
+    pxcm = 10 * k
     w, h = 48 * pxcm, 44 * pxcm
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
     base = np.array([168, 154, 130], np.float32)[None, None, :] * (0.90 + 0.10 * (1 - yy / h))[:, :, None]
-    band = blind_light(xx * 0.1, yy * 0.1, 17.0, -33, 0.0, 0.1)
+    band = blind_light(xx * 0.1 / k, yy * 0.1 / k, 17.0, -33, 0.0, 0.1)
     base *= (0.93 + 0.10 * band)[:, :, None]
+    if HQ:
+        rs_ = np.random.RandomState(5)
+        base *= (1 + (0.022 if FILM_GRAIN else 0.0) * cv2.GaussianBlur(rs_.randn(h, w).astype(np.float32), (0, 0), 0.7))[:, :, None]   # plastic grain
+        mk = Image.new('L', (w, h), 0)
+        ImageDraw.Draw(mk).rounded_rectangle([40 * k, 55 * k, 440 * k, 372 * k], radius=(54 if HQ else 34) * k, fill=255)
+        mk = np.array(mk, np.float32) / 255.0
+        ao = cv2.GaussianBlur(mk, (0, 0), 16 * k)
+        base *= (1 - 0.42 * ao * (1 - mk))[:, :, None]                      # soft shadow where the screen is recessed
+        edge = np.exp(-(yy / (3.0 * k)) ** 2) + np.exp(-(xx / (3.0 * k)) ** 2) * 0.6   # light catching the top / left edges
+        base *= (1 + 0.07 * edge)[:, :, None]
+        spec = np.exp(-(((xx / w) * 0.9 + (yy / h) * 0.5 - 0.30) / 0.05) ** 2) * (yy / h < 0.12)
+        base *= (1 + 0.05 * spec)[:, :, None]
     im = Image.fromarray(np.clip(base, 0, 255).astype(np.uint8))
     d = ImageDraw.Draw(im, 'RGBA')
-    d.rounded_rectangle([40, 55, 440, 372], radius=34, fill=(26, 22, 20), outline=(120, 108, 92), width=3)
-    d.rounded_rectangle([46, 61, 434, 366], radius=30, outline=(0, 0, 0, 120), width=5)
-    d.ellipse([382, 390, 398, 406], fill=(120, 255, 120))
-    for k in range(6):
-        d.line([60 + k * 18, 396, 60 + k * 18, 414], fill=(120, 108, 92), width=3)
+    d.rounded_rectangle([40 * k, 55 * k, 440 * k, 372 * k], radius=(54 if HQ else 34) * k, fill=(26, 22, 20), outline=(120, 108, 92), width=3 * k)
+    d.rounded_rectangle([46 * k, 61 * k, 434 * k, 366 * k], radius=(50 if HQ else 30) * k, outline=(0, 0, 0, 120), width=5 * k)
+    d.ellipse([382 * k, 390 * k, 398 * k, 406 * k], fill=(120, 255, 120))
+    for j in range(6):
+        d.line([(60 + j * 18) * k, 396 * k, (60 + j * 18) * k, 414 * k], fill=(120, 108, 92), width=3 * k)
     ttl, fs = TITLE.upper(), 15
     while fs > 9 and mono(fs).getlength(ttl) > 190:   # keep it between the vent slots and the power light
         fs -= 1
-    d.text((240, 400), ttl, font=mono(fs), fill=(104, 94, 80), anchor='mm')
-    d.text((240, 27), BRAND, font=mono(15), fill=(104, 94, 80), anchor='mm')   # same font/colour as the bottom label
+    d.text((240 * k, 400 * k), ttl, font=mono(fs * k), fill=(104, 94, 80), anchor='mm')
+    d.text((240 * k, 27 * k), BRAND, font=mono(15 * k), fill=(104, 94, 80), anchor='mm')   # same font/colour as the bottom label
+    if HQ:   # rounded outer corners (alpha), so the whole monitor reads rounder
+        al = Image.new('L', (w, h), 0)
+        ImageDraw.Draw(al).rounded_rectangle([0, 0, w - 1, h - 1], radius=int(6.0 * pxcm), fill=255)
+        al = cv2.GaussianBlur(np.array(al), (0, 0), 1.1 * k)
+        return np.dstack([np.array(im.convert('RGB')), al])
     return np.array(im)
 
 
 def make_keyboard():
-    w, h = 400, 220
+    k = 2 if HQ else 1
+    w, h = 400 * k, 220 * k
     im = Image.new('RGB', (w, h), (190, 176, 150))
     d = ImageDraw.Draw(im)
+    legends = ["`1234567890-=<", "TQWERTYUIOP[]\\", "CASDFGHJKL;'  ", "SZXCVBNM,./^> "]
     for r in range(5):
         n = 14 if r < 4 else 1
         for c in range(n):
             if r == 4:
-                d.rounded_rectangle([90, 22 + r * 40, 310, 54 + r * 40], 5, fill=(214, 202, 176))
+                box = [90 * k, (22 + r * 40) * k, 310 * k, (54 + r * 40) * k]
+                if HQ:
+                    d.rounded_rectangle([box[0], box[1] + 3 * k, box[2], box[3] + 3 * k], 5 * k, fill=(150, 138, 114))
+                d.rounded_rectangle(box, 5 * k, fill=(214, 202, 176))
+                if HQ:
+                    d.line([box[0] + 6 * k, box[1] + 2 * k, box[2] - 6 * k, box[1] + 2 * k], fill=(232, 222, 198), width=k)
                 break
-            x0 = 10 + c * 27.5 + (r % 2) * 5
-            d.rounded_rectangle([x0, 18 + r * 40, x0 + 24, 50 + r * 40], 5, fill=(214, 202, 176))
+            x0 = (10 + c * 27.5 + (r % 2) * 5) * k
+            box = [x0, (18 + r * 40) * k, x0 + 24 * k, (50 + r * 40) * k]
+            if HQ:
+                d.rounded_rectangle([box[0], box[1] + 3 * k, box[2], box[3] + 3 * k], 5 * k, fill=(150, 138, 114))   # key side / shadow
+            d.rounded_rectangle(box, 5 * k, fill=(214, 202, 176))
+            if HQ:
+                d.line([box[0] + 5 * k, box[1] + 2 * k, box[2] - 5 * k, box[1] + 2 * k], fill=(232, 222, 198), width=k)  # top-edge highlight
+                ch_ = legends[r][c] if c < len(legends[r]) else ' '
+                d.text(((box[0] + box[2]) / 2, (box[1] + box[3]) / 2 - k), ch_, font=mono(9 * k), fill=(128, 114, 94), anchor='mm')
     a = np.array(im, np.float32)
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
-    band = blind_light(xx * 0.1, yy * 0.1, 15.0, 18, 0.2, 0.1)
+    band = blind_light(xx * 0.1 / k, yy * 0.1 / k, 15.0, 18, 0.2, 0.1)
     a *= (0.90 + 0.12 * band)[:, :, None]
     return np.clip(a, 0, 255).astype(np.uint8)
 
 
 WALL, DESK, BEZEL, KEYB = make_wall(), make_desk(), make_bezel(), make_keyboard()
+
+
+_GLASS = {}
+def glass_overlay(h_, w_):
+    """HQ only: soft window reflection across the CRT glass (screen-space, additive)."""
+    if (h_, w_) not in _GLASS:
+        yy, xx = np.mgrid[0:h_, 0:w_].astype(np.float32)
+        u, v = xx / w_, yy / h_
+        band = np.exp(-((u * 0.75 + v * 0.55 - 0.50) / 0.09) ** 2) * 0.55 + np.exp(-((u * 0.75 + v * 0.55 - 0.78) / 0.04) ** 2) * 0.35
+        corner = np.exp(-(((u - 0.08) / 0.35) ** 2 + ((v - 0.06) / 0.30) ** 2))
+        g = (0.050 * band + 0.035 * corner)[:, :, None] * np.array([255, 236, 208], np.float32)[None, None, :]
+        _GLASS[(h_, w_)] = g
+    return _GLASS[(h_, w_)]
 
 
 # ------------------------------------------------------------------ wall headline (typewriter)
@@ -313,6 +390,19 @@ WLINES = [
     [("GRAIN: FIXABLE.", 0.3), ("BLUR: NEVER.", 1.66), ("THAT'S THE TRICK.", 2.68)],
     [("TRY IT FRIDAY NIGHT.", 0.3), ("COMMENT SETTINGS", 1.66), ("SETUP IN YOUR DMs", 2.68)],
 ]
+# day 1 wall headlines (line, start time within the scene, seconds); timed to the narration words
+D1_WLINES = [
+    [("THIS PHOTO", 0.25), ("LOOKED TRASH.", 0.95), ("OUT OF CAMERA.", 1.9)],
+    [("THE RAW.", 0.25), ("FLAT. DARK.", 2.4), ("COLORS OFF.", 3.9)],
+    [("1. WHITE BALANCE", 0.25), ("FIX THE COLOR.", 3.0), ("REAL JERSEYS.", 4.3)],
+    [("2. SHADOWS UP", 0.25), ("SEE HIS FACE.", 2.6)],
+    [("3. CONTRAST", 0.25), ("+ COLOR.", 1.9), ("IT POPS.", 2.9)],
+    [("THAT'S IT.", 0.25), ("FOUR SLIDERS.", 1.0), ("TWO MINUTES.", 2.0)],
+    [("NOW IT LOOKS", 0.25), ("LIKE THE", 1.3), ("MOMENT FELT.", 1.9)],
+    [("SAVE THIS.", 0.25), ("FOR FLAT EDITS.", 1.6)],
+]
+if DAY == '1':
+    WLINES = D1_WLINES
 CPS = 17.0
 TXT_COL = (255, 96, 52)
 
@@ -364,10 +454,35 @@ PWD, PHT = 720, 400
 
 # ------------------------------------------------------------------ the user's real photo
 _RP = {}
-_BASE_W, _BASE_H = 1440, 960
+_BASE_W, _BASE_H = (2160, 1440) if HQ else (1440, 960)
+
+
+_LUMW = np.array([0.299, 0.587, 0.114], np.float32)
+
+
+def _d1_grade(a, GP, wb=1.0, sh=1.0, sat=1.0):
+    """The three global edits that carry the RAW toward the FINAL (see fit_grade.py). a: float RGB in 0..1."""
+    a = np.clip(a * (1 + (GP['G'] - 1) * wb).astype(np.float32), 0, 1)
+    if sh > 0:
+        l = a @ _LUMW
+        l2 = l + sh * (np.interp(l, GP['knots'], GP['ys']) - l)
+        a = np.clip(a * (l2 / np.maximum(l, 1e-3))[..., None], 0, 1)
+    if sat > 0:
+        l = (a @ _LUMW)[..., None]
+        a = np.clip(l + (a - l) * (1 + (float(GP['Sat']) - 1) * sat), 0, 1)
+    return a
 
 
 def _rp_base():
+    if DAY == '1' and 'raw' not in _RP:
+        ld = lambda p: cv2.resize(cv2.cvtColor(cv2.imread(p), cv2.COLOR_BGR2RGB), (_BASE_W, _BASE_H),
+                                  interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
+        raw, fin = ld(RAW_PATH), ld(FINAL_PATH)
+        GP = np.load(os.path.join(HERE, 'grade_params.npz'))
+        _RP['GP'] = GP
+        _RP['raw'], _RP['final'], _RP['sharp'] = raw, fin, raw
+        # whatever the 3 global steps cannot reach (local edits) is faded in with the last step
+        _RP['res'] = fin - _d1_grade(raw, GP)
     if 'sharp' not in _RP:
         im = cv2.cvtColor(cv2.imread(PHOTO_PATH), cv2.COLOR_BGR2RGB)
         im = cv2.resize(im, (_BASE_W, _BASE_H), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
@@ -404,7 +519,29 @@ def rphoto(mode, tl, dur, bright=1.0, grain=0.0, seed=0):
     return out, mapper
 
 
+def rphoto_d1(tl, dur, wb=0.0, sh=0.0, sat=0.0, res=0.0, src='raw'):
+    """Day 1: the RAW with the edit steps applied to the given amounts (0..1 each), or the real FINAL (src='final').
+    Same slow push-in as rphoto. Returns a 720x400 (x SS) uint8 crop."""
+    R = _rp_base()
+    z = 1.0 + 0.045 * clamp(tl / max(dur, 0.1))
+    f = _BASE_W / 1440.0
+    cw, ch = _BASE_W / z, 800.0 * f / z
+    x0 = (_BASE_W - cw) / 2
+    y0 = 80 * f + (800 * f - ch) / 2
+    OW, OH = int(PWD * SS), int(PHT * SS)
+    M = np.float32([[OW / cw, 0, -x0 * OW / cw], [0, OH / ch, -y0 * OH / ch]])
+    fl = cv2.INTER_AREA if z < 1.01 else cv2.INTER_LINEAR
+    warp = lambda s: cv2.warpAffine(s, M, (OW, OH), flags=fl, borderMode=cv2.BORDER_REFLECT)
+    a = warp(R[src])
+    if src == 'raw' and (wb > 0 or sh > 0 or sat > 0 or res > 0):
+        a = _d1_grade(a, R['GP'], wb, sh, sat)
+        if res > 0:
+            a = np.clip(a + warp(R['res']) * res, 0, 1)
+    return (np.clip(a, 0, 1) * 255).astype(np.uint8)
+
+
 # ------------------------------------------------------------------ CRT screen content (800x600)
+TX0 = 40 if HQ else 14   # left/right margin of the app bar text (HQ corners are rounder, so keep text inside them)
 AMB, DIMA, REDS, GRN = (255, 176, 66), (150, 96, 40), (255, 92, 64), (150, 255, 120)
 BGS = (20, 11, 7)
 
@@ -417,8 +554,8 @@ def screen_base(fr):
     im = Image.new('RGB', (int(800 * SS), int(600 * SS)), BGS)
     d = SD(im)
     d.rectangle([0, 0, 800, 36], fill=(44, 24, 10))
-    sd(d, (14, 18), "SHUTTER_PRO v2.1", 22)
-    sd(d, (786, 18), f"FRM {fr:04d}", 20, DIMA, 'rm')
+    sd(d, (TX0, 18), "PHOTO_LAB v2.1" if DAY == '1' else "SHUTTER_PRO v2.1", 22)
+    sd(d, (800 - TX0, 18), f"FRM {fr:04d}", 20, DIMA, 'rm')
     return im, d
 
 
@@ -455,14 +592,137 @@ def label(d, xy, text, col, sz=24, p=1.0):
     sd(d, (x + 11, y), text, sz, col)
 
 
-def screen_scene(si, tl, dur, fr, gt):
+# ------------------------------------------------------------------ day 1 (raw vs edit) screen content
+def d1_state(si, tl):
+    """Edit amounts (wb, shadows, saturation, residual) for scene si at scene time tl, plus which slider is live."""
+    if si <= 1:
+        return 0.0, 0.0, 0.0, 0.0, None
+    if si == 2:
+        return smooth(prog(tl, 1.4, 1.3)), 0, 0, 0, (0 if 1.3 < tl < 2.9 else None)
+    if si == 3:
+        return 1.0, smooth(prog(tl, 1.0, 1.5)), 0, 0, (1 if 0.9 < tl < 2.6 else None)
+    if si == 4:
+        res = smooth(prog(tl, 0.3, 1.6))
+        sat = smooth(prog(tl, 1.9, 1.1))
+        return 1.0, 1.0, sat, res, (2 if 0.2 < tl < 1.95 else (3 if 1.85 < tl < 3.1 else None))
+    return 1.0, 1.0, 1.0, 1.0, None
+
+
+D1_SLIDERS = [("WHITE BAL", lambda wb, sh, sa, rs: f"{5200 + int(450 * wb)}K", lambda wb, sh, sa, rs: 0.5 + 0.30 * wb),
+              ("SHADOWS", lambda wb, sh, sa, rs: f"{int(42 * sh):+d}", lambda wb, sh, sa, rs: 0.5 + 0.30 * sh),
+              ("CONTRAST", lambda wb, sh, sa, rs: f"{int(24 * rs):+d}", lambda wb, sh, sa, rs: 0.5 + 0.30 * rs),
+              ("COLOR", lambda wb, sh, sa, rs: f"{int(22 * sa):+d}", lambda wb, sh, sa, rs: 0.5 + 0.30 * sa)]
+
+
+def edit_strip(d, st, live=None, flash=None, col=AMB):
+    wb, sh, sa, rs, _ = st
+    for i, (nm, vt, fr_) in enumerate(D1_SLIDERS):
+        x0 = 40 + i * 182
+        on = (live == i) or (flash is not None and flash >= i)
+        d.rectangle([x0, 478, x0 + 168, 574], fill=col if on else (36, 20, 9), outline=col if on else DIMA, width=2)
+        sd(d, (x0 + 10, 495), nm, 16, BGS if on else DIMA)
+        sd(d, (x0 + 10, 524), vt(wb, sh, sa, rs), 28, BGS if on else AMB)
+        k = x0 + 12 + 144 * fr_(wb, sh, sa, rs)
+        d.line([x0 + 12, 558, x0 + 156, 558], fill=BGS if on else (90, 56, 24), width=4)
+        d.ellipse([k - 7, 551, k + 7, 565], fill=BGS if on else AMB)
+
+
+def hist_box(d, arr, x=588, y=58, w=162, h=64):
+    """Small luminance histogram of the photo on screen, drawn over its top-right corner."""
+    l = arr.astype(np.float32) @ _LUMW
+    hh, _ = np.histogram(l, bins=36, range=(0, 255))
+    hh = np.sqrt(hh / hh.max())
+    d.rectangle([x, y, x + w, y + h], fill=(14, 8, 5), outline=DIMA, width=1)
+    bw = (w - 8) / 36
+    for i, v in enumerate(hh):
+        d.rectangle([x + 4 + i * bw, y + h - 4 - v * (h - 12), x + 4 + (i + 1) * bw - 1, y + h - 4], fill=AMB)
+    sd(d, (x + 6, y + 9), "HIST", 12, DIMA)
+
+
+def day1_content(si, tl, dur, fr):
     if si == -1:
+        return intro_screen(tl, fr)
+    im, d = screen_base(fr)
+    st = d1_state(si, tl)
+    wb, sh, sa, rs, live = st
+    if si == 6:   # reveal: RAW | FINAL divider sweeps right -> left, ending on the real final edit
+        a_raw = rphoto_d1(tl, dur)
+        a_fin = rphoto_d1(tl, dur, src='final')
+        dv = 1 - smooth(prog(tl, 0.2, 1.9))
+        cx = int(round(dv * a_raw.shape[1]))
+        arr = np.ascontiguousarray(np.concatenate([a_raw[:, :cx], a_fin[:, cx:]], 1))
+    else:
+        arr = rphoto_d1(tl, dur, wb, sh, sa, rs)
+    d = paste_photo(im, arr)
+    sd(d, (52, 66), "IMG_0412.CR3", 18, (255, 220, 170))
+    if si == 6:
+        px = 40 + dv * 720
+        d.line([px, 50, px, 450], fill=AMB, width=3)
+        d.ellipse([px - 9, 240, px + 9, 258], fill=AMB)
+        if dv > 0.12:
+            label(d, (56, 424), "RAW", DIMA, 20, 1)
+        if dv < 0.88:
+            label(d, (640, 424), "FINAL", GRN, 20, 1)
+        if tl > 2.3:
+            sd(d, (400, 520), "RAW  >  FINAL", 34, (255, 230, 190), 'mm')
+            sd(d, (400, 560), "PLAYOFF NIGHT", 20, DIMA, 'mm')
+        return im
+    hist_box(d, arr)
+    flash = None
+    if si == 5:
+        flash = sum(1 for k in range(4) if tl > 1.0 + 0.25 * k) - 1
+        flash = flash if flash >= 0 else None
+    edit_strip(d, st, live, flash)
+    if si == 0:
+        if tl > 0.6:
+            label(d, (56, 90), "x UNEDITED RAW", REDS, 22, 1)
+    elif si == 1:
+        for k, (t0, s) in enumerate(((2.5, "x FLAT"), (3.3, "x DARK"), (4.0, "x COLORS OFF"))):
+            if tl > t0:
+                label(d, (56, 90 + 44 * k), s, REDS, 22, 1)
+    elif si == 2:
+        if tl > 4.3:
+            label(d, (56, 90), "ok TRUE COLOR", GRN, 22, 1)
+    elif si == 3:
+        if tl > 3.6:
+            label(d, (56, 90), "ok FACES VISIBLE", GRN, 22, 1)
+    elif si == 4:
+        if tl > 3.0:
+            label(d, (56, 90), "ok IT POPS", GRN, 22, 1)
+    elif si == 5:
+        if tl > 2.0:
+            sd(d, (590, 150), "EDIT TIME", 16, DIMA)
+            sd(d, (590, 178), "02:00", 34, (255, 230, 190))
+    else:   # CTA terminal
+        d.rectangle([0, 37, 800, 600], fill=BGS)
+        lines = [("> save this post", 0.3), ("> for flat edits", 1.4), ("saving ...", 2.2)]
+        for k, (s, t0) in enumerate(lines):
+            n = int(clamp((tl - t0) * 18, 0, len(s)))
+            sd(d, (40, 110 + k * 76), s[:n], 36, AMB if k < 2 else DIMA)
+            if 0 < n < len(s) or (n == len(s) and k == 1 and tl < 2.2):
+                cx = 40 + mono(36).getlength(s[:n])
+                if int(tl * 5) % 2 == 0:
+                    d.rectangle([cx + 2, 110 + k * 76 - 18, cx + 22, 110 + k * 76 + 18], fill=AMB)
+        if tl > 2.6:
+            p = smooth(prog(tl, 2.6, 0.4))
+            ys = 330 - 20 * (1 - p)
+            d.polygon([360, ys, 440, ys, 440, ys + 130, 400, ys + 96, 360, ys + 130], fill=AMB)
+        if tl > 3.0:
+            sd(d, (400, 520), "ok SAVED", 38, GRN, 'mm')
+    return im
+
+
+def screen_scene(si, tl, dur, fr, gt):
+    if DAY == '1':
+        im = day1_content(si, tl, dur, fr)
+        d = SD(im)
+    elif si == -1:
         im = intro_screen(tl, fr)
         d = SD(im)
     else:
         im, d = screen_base(fr)
     ph = tl * 9.0
-    if si == -1:
+    if DAY == '1' or si == -1:
         pass
     elif si == 0:
         arr, _ = rphoto('blur_all', tl, dur)
@@ -578,17 +838,20 @@ def screen_scene(si, tl, dur, fr, gt):
     yy, xx = np.mgrid[0:h_, 0:w_].astype(np.float32)
     v = 1 - 0.38 * (((xx / SS - 400) / 440) ** 2 + ((yy / SS - 300) / 340) ** 2)
     a *= np.clip(v, 0.3, 1)[:, :, None]
-    a *= 1.0 + 0.03 * math.sin(gt * 55)
+    # (screen brightness flicker removed 2026-11-09 at the user's request)
+    if HQ:
+        a = a + glass_overlay(h_, w_)
     a = np.clip(a, 0, 255)
     a = cv2.GaussianBlur(a, (0, 0), 0.8)
     rgba = np.zeros((h_, w_, 4), np.uint8)
     rgba[:, :, :3] = a.astype(np.uint8)
     mask = np.zeros((h_, w_), np.uint8)
     k = lambda v_: int(round(v_ * SS))
-    cv2.rectangle(mask, (k(30), 0), (k(770), h_), 255, -1)
-    cv2.rectangle(mask, (0, k(30)), (w_, k(570)), 255, -1)
-    for cx, cy in ((30, 30), (770, 30), (30, 570), (770, 570)):
-        cv2.circle(mask, (k(cx), k(cy)), k(30), 255, -1, cv2.LINE_AA)
+    R_ = 48 if HQ else 30   # corner radius of the glass (800x600 space); bigger = rounder
+    cv2.rectangle(mask, (k(R_), 0), (k(800 - R_), h_), 255, -1)
+    cv2.rectangle(mask, (0, k(R_)), (w_, k(600 - R_)), 255, -1)
+    for cx, cy in ((R_, R_), (800 - R_, R_), (R_, 600 - R_), (800 - R_, 600 - R_)):
+        cv2.circle(mask, (k(cx), k(cy)), k(R_), 255, -1, cv2.LINE_AA)
     rgba[:, :, 3] = cv2.GaussianBlur(mask, (0, 0), 1.2)
     return rgba
 
@@ -601,7 +864,7 @@ _INTRO = {}
 
 def intro_photo():
     if 'p' not in _INTRO:
-        a, _ = rphoto('blur_all', 0.0, 1.0)
+        a = rphoto_d1(0.0, 1.0) if DAY == '1' else rphoto('blur_all', 0.0, 1.0)[0]
         _INTRO['p'] = a
     return _INTRO['p']
 
@@ -619,7 +882,7 @@ def intro_screen(tl, fr):
     im = Image.new('RGB', (int(800 * SS), int(600 * SS)), BGS)
     d = SD(im)
     d.rectangle([0, 0, 800, 36], fill=(44, 24, 10))
-    sd(d, (14, 18), "PHOTO LAB", 20, AMB)
+    sd(d, (TX0, 18), "PHOTO LAB", 20, AMB)
     for i, tname in enumerate(["LIBRARY", "DEVELOP", "MAP", "BOOK"]):
         x = 190 + i * 112
         sd(d, (x, 18), tname, 18, AMB if tname == "DEVELOP" else DIMA)
@@ -629,17 +892,26 @@ def intro_screen(tl, fr):
     arr = cv2.resize(intro_photo(), (int(540 * SS), int(300 * SS)), interpolation=cv2.INTER_AREA)
     pst(im, arr, (20, 50))
     d.rectangle([18, 48, 561, 351], outline=DIMA, width=2)
-    sd(d, (24, 366), "IMG_0412.CR3   1/125   f/2.8   ISO 3200", 17, DIMA)
+    sd(d, (24, 366), "IMG_0412.CR3   RAW   UNEDITED" if DAY == '1' else "IMG_0412.CR3   1/125   f/2.8   ISO 3200", 17, DIMA)
     # right panel
     d.rectangle([575, 48, 790, 420], outline=(90, 56, 24), width=2)
     sd(d, (588, 66), "BASIC", 20, AMB)
-    slider(d, 588, 96, 190, "EXPOSURE", 0.5)
-    slider(d, 588, 150, 190, "CONTRAST", 0.5)
-    sh = 0.35 + 0.60 * smooth(prog(tl, 0.7, 1.5))
-    slider(d, 588, 204, 190, "SHARPNESS", sh, REDS if tl > 1.2 else AMB, f"{int(sh * 150)}")
-    slider(d, 588, 258, 190, "CLARITY", 0.5)
-    if tl > 2.0 and int(tl * 3) % 2 == 0:
-        sd(d, (682, 340), "STILL BLURRY", 20, REDS, 'mm')
+    if DAY == '1':
+        ex = 0.5 + 0.22 * smooth(prog(tl, 0.7, 1.5))
+        slider(d, 588, 96, 190, "EXPOSURE", ex, REDS if tl > 1.2 else AMB)
+        slider(d, 588, 150, 190, "CONTRAST", 0.5)
+        slider(d, 588, 204, 190, "SHADOWS", 0.5)
+        slider(d, 588, 258, 190, "COLOR", 0.5)
+        if tl > 2.0 and int(tl * 3) % 2 == 0:
+            sd(d, (682, 340), "STILL FLAT", 20, REDS, 'mm')
+    else:
+        slider(d, 588, 96, 190, "EXPOSURE", 0.5)
+        slider(d, 588, 150, 190, "CONTRAST", 0.5)
+        sh = 0.35 + 0.60 * smooth(prog(tl, 0.7, 1.5))
+        slider(d, 588, 204, 190, "SHARPNESS", sh, REDS if tl > 1.2 else AMB, f"{int(sh * 150)}")
+        slider(d, 588, 258, 190, "CLARITY", 0.5)
+        if tl > 2.0 and int(tl * 3) % 2 == 0:
+            sd(d, (682, 340), "STILL BLURRY", 20, REDS, 'mm')
     # filmstrip
     d.rectangle([14, 396, 786, 590], outline=(90, 56, 24), width=2)
     base = intro_photo()
@@ -654,7 +926,7 @@ def intro_screen(tl, fr):
         d.rectangle([x - 2, 408, x + 119, 486], outline=AMB if i == 2 else (90, 56, 24), width=3 if i == 2 else 2)
         if tl > 0.3 + i * 0.22:
             sd(d, (x + 8, 504), "x", 22, REDS)
-            sd(d, (x + 34, 504), "BLUR", 17, REDS)
+            sd(d, (x + 34, 504), "FLAT" if DAY == '1' else "BLUR", 17, REDS)
     sd(d, (30, 560), "6 / 6 FLAGGED", 18, DIMA)
     return im
 
@@ -710,7 +982,10 @@ _diag = (_hx * math.cos(math.radians(-33)) + _hy * math.sin(math.radians(-33)))
 WARM = np.array([1.07, 0.99, 0.88], np.float32)
 
 
-def post(cv, t, rs):
+_CA = None
+
+
+def post(cv, t, rs, gm=None):   # gm: 0..1 mask of the CRT screen, which gets no film grain
     img = cv.astype(np.float32) / 255.0
     # slow drifting cloud-light over everything
     m = 1 + 0.04 * np.sin((_diag + t * 38) / 95.0)
@@ -728,8 +1003,18 @@ def post(cv, t, rs):
     img = np.clip(img, 0, 1)
     img = 0.65 * img + 0.35 * (img * img * (3 - 2 * img))
     img *= VIG
-    g = rs.randn(H // 2, W // 2).astype(np.float32) * 0.012
-    img += cv2.resize(g, (W, H), interpolation=cv2.INTER_LINEAR)[:, :, None]
+    if HQ:   # tiny lens fringing toward the corners, like a real lens
+        global _CA
+        if _CA is None:
+            yy_, xx_ = np.mgrid[0:H, 0:W].astype(np.float32)
+            _CA = [(((xx_ - W / 2) * s_ + W / 2).astype(np.float32), ((yy_ - H / 2) * s_ + H / 2).astype(np.float32)) for s_ in (1.0009, 0.9991)]
+        img[:, :, 0] = cv2.remap(img[:, :, 0], _CA[0][0], _CA[0][1], cv2.INTER_LINEAR)
+        img[:, :, 2] = cv2.remap(img[:, :, 2], _CA[1][0], _CA[1][1], cv2.INTER_LINEAR)
+    g = rs.randn(H // 2, W // 2).astype(np.float32) * (0.012 if FILM_GRAIN else 0.0)
+    gr = cv2.resize(g, (W, H), interpolation=cv2.INTER_LINEAR)
+    if gm is not None:
+        gr = gr * (1 - gm)
+    img += gr[:, :, None]
     fade = smooth(t / 0.5) * (1 - smooth((t - (TOTAL - 0.5)) / 0.5))
     img *= fade
     return (np.clip(img, 0, 1) * 255).astype(np.uint8)
@@ -763,28 +1048,55 @@ TXT_Q = np.array([[-38, 168, 0.4], [38, 168, 0.4], [38, 168 - 24.8, 0.4], [-38, 
 def render(fr, ytxt=None):
     t = fr / FPS
     si = which(t)
-    tl = t - (STARTS[si] if si >= 0 else 0.0)
+    tl = t - (STARTS[si] if si >= 0 else OPEN)
+    tl = max(tl, 0.0) if si < 0 else tl
     cam = Cam(t)
     cv = np.zeros((HS, WS, 3), np.uint8)
     quad(cv, cam, WALL, WALL_Q)
+    if HQ:
+        room.draw_room_back(cv, cam)
     quad(cv, cam, DESK, DESK_Q)
+    if HQ:
+        room.draw_desk_set(cv, cam)
     if si >= 0:
         quad(cv, cam, wall_text(si, tl, SC[si].dur), TXT_Q, alpha=True)
     # monitor body (sides / top / dark back)
-    body = (88, 80, 70)
-    poly(cv, cam, _mscale([[-24, 127, 50], [24, 127, 50], [18, 122, 12], [-18, 122, 12]]), (150, 140, 120), (0, 1, 0))
-    poly(cv, cam, _mscale([[-24, 127, 50], [-24, 83, 50], [-18, 88, 12], [-18, 122, 12]]), (100, 92, 78), (-1, 0, 0))
-    poly(cv, cam, _mscale([[24, 127, 50], [24, 83, 50], [18, 88, 12], [18, 122, 12]]), (160, 148, 126), (1, 0, 0))
-    quad(cv, cam, BEZEL, BEZEL_Q)
-    quad(cv, cam, screen_scene(si, tl, SC[si].dur if si >= 0 else OFF, fr, t), SCREEN_Q, alpha=True)
-    quad(cv, cam, (KEYB * 0.8).astype(np.uint8), KEY_Q)
+    if HQ:
+        room.draw_monitor_body_hq(cv, cam)
+    else:
+        poly(cv, cam, _mscale([[-24, 127, 50], [24, 127, 50], [18, 122, 12], [-18, 122, 12]]), (150, 140, 120), (0, 1, 0))
+        poly(cv, cam, _mscale([[-24, 127, 50], [-24, 83, 50], [-18, 88, 12], [-18, 122, 12]]), (100, 92, 78), (-1, 0, 0))
+        poly(cv, cam, _mscale([[24, 127, 50], [24, 83, 50], [18, 88, 12], [18, 122, 12]]), (160, 148, 126), (1, 0, 0))
+    quad(cv, cam, BEZEL, BEZEL_Q, alpha=HQ)
+    scr = screen_scene(si, tl, SC[si].dur if si >= 0 else INTRO, fr, t)
+    quad(cv, cam, scr, SCREEN_Q, alpha=True)
+    if HQ:
+        room.draw_desk_front(cv, cam)
+    else:
+        quad(cv, cam, (KEYB * 0.8).astype(np.uint8), KEY_Q)
     cv = cv2.resize(cv, (W, H), interpolation=cv2.INTER_AREA)
-    if t < OFF:
-        pr, px_, py_ = make_person(t)
+    if HQ:   # the lit screen spills warm light onto the bezel, keyboard and wall (never onto the screen itself)
+        m_ = scr[:, :, 3] > 128
+        if m_.any():
+            col = scr[:, :, :3][m_].astype(np.float32).mean(0) / 255.0
+            pts, _ = cam.proj(SCREEN_Q)
+            pts = pts / SSF
+            sm = np.zeros((H // 8, W // 8, 3), np.float32)
+            cv2.fillConvexPoly(sm, np.round(pts / 8 * 16).astype(np.int32), tuple(float(c) for c in col), cv2.LINE_AA, 4)
+            glow = cv2.GaussianBlur(sm, (0, 0), 4) * 0.55 + cv2.GaussianBlur(sm, (0, 0), 11) * 0.9
+            hole = cv2.GaussianBlur(np.clip(sm.max(2, keepdims=True), 0, 1)[:, :, 0], (0, 0), 0.6)
+            glow = cv2.resize(glow * (1 - np.clip(hole * 1.5, 0, 1))[:, :, None], (W, H), interpolation=cv2.INTER_LINEAR)
+            cv = np.clip(cv.astype(np.float32) + glow * 255 * 0.10, 0, 255).astype(np.uint8)
+    if OPEN <= t < OFF:
+        pr, px_, py_ = make_person(t - OPEN)
         a = pr[:, :, 3:4]
         reg = cv[py_:py_ + pr.shape[0], px_:px_ + pr.shape[1]].astype(np.float32)
         cv[py_:py_ + pr.shape[0], px_:px_ + pr.shape[1]] = np.clip(reg * (1 - a) + pr[:, :, :3] * 255 * a, 0, 255).astype(np.uint8)
-    out = post(cv, t, np.random.RandomState(fr))
+    gm = np.zeros((H, W), np.uint8)   # the TV screen is kept grain-free
+    pts, _ = cam.proj(SCREEN_Q)
+    cv2.fillConvexPoly(gm, np.round(pts / SSF * 16).astype(np.int32), 255, cv2.LINE_AA, 4)
+    gm = cv2.GaussianBlur(gm, (0, 0), 2.0).astype(np.float32) / 255.0
+    out = post(cv, t, np.random.RandomState(fr), gm)
     im = Image.fromarray(out)
     d = ImageDraw.Draw(im)
     d.text((W // 2, H - 70), f"{fr:04d} / {NFR:04d}", font=mono(26), fill=(255, 214, 170), anchor='mm')
@@ -804,3 +1116,6 @@ def render_range(args):
     if rc == 0:
         os.replace(tmp, path)
     return rc
+
+
+import room  # noqa: E402  (HQ room props; imported last because room.py uses names defined above)
