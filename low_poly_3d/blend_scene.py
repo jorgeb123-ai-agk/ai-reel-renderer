@@ -363,7 +363,7 @@ for f, loc, t in [(1, (4.3, -6.6, 3.6), (0.7, 1.7, 2.4)),
     cam.location = loc; cam.keyframe_insert("location", frame=f)
     tgt.location = t; tgt.keyframe_insert("location", frame=f)
 
-# animation: Claude bob / blink / talking, guy head, typing
+# animation: Claude bob / blink / talking, Cam head, typing
 def kf(o, path, idx, f, v):
     setattr_target = getattr(o, path)
     setattr_target[idx] = v
@@ -372,7 +372,7 @@ def kf(o, path, idx, f, v):
 
 for f in range(1, NF + 1, 6):
     kf(robot_root, "location", 2, f, RB[2] + 0.03 * math.sin(f / (NF - 1) * 4 * math.pi))
-GUY = (4, 40)      # frames guy talks
+GUY = (4, 40)      # frames Cam talks
 CL1 = (46, 72)     # Claude line 1
 CL2 = (75, 120)    # Claude line 2
 for f in range(1, NF + 1, 2):
@@ -385,7 +385,7 @@ for o in (eyeL, eyeR):
 for f in range(1, NF + 1, 2):
     talking = CL1[0] <= f <= CL1[1] or CL2[0] <= f <= CL2[1]
     kf(arm_piv[1], "rotation_euler", 1, f, (math.radians(-35) + math.radians(18) * math.sin(f * 0.8)) if talking else 0.0)
-# guy head: frustrated nod/shake while he talks, then looks up
+# Cam head: frustrated nod/shake while he talks, then looks up
 for f, rx, rz in ((1, 0.0, 0.0), (8, 0.18, 0.0), (16, 0.2, 0.2), (22, 0.2, -0.2), (28, 0.2, 0.15), (40, 0.18, 0.0),
                   (60, 0.1, 0.0), (80, -0.05, 0.0), (120, -0.1, 0.0)):
     head_piv.rotation_euler = (rx, 0.0, rz); head_piv.keyframe_insert("rotation_euler", frame=f)
