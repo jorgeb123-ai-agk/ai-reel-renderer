@@ -1,0 +1,4 @@
+bpy>=5.3
+numpy
+pillow
+# also needs ffmpeg on PATH

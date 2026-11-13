@@ -1,0 +1,79 @@
+[
+ {
+  "t": 0.55,
+  "id": "whoosh-slow-soft",
+  "start": 0.098,
+  "sync": 0.452,
+  "gain_db": -7
+ },
+ {
+  "t": 0.8,
+  "id": "whoosh-fast-soft",
+  "start": 0.701,
+  "sync": 0.099,
+  "gain_db": -13
+ },
+ {
+  "t": 0.1,
+  "id": "pop-small-in",
+  "start": 0.09,
+  "sync": 0.01,
+  "gain_db": -13
+ },
+ {
+  "t": 0.8,
+  "id": "pop-small-in",
+  "start": 0.79,
+  "sync": 0.01,
+  "gain_db": -13
+ },
+ {
+  "t": 1.8,
+  "id": "notification-message-in-soft",
+  "start": 1.754,
+  "sync": 0.046,
+  "gain_db": -4
+ },
+ {
+  "t": 1.95,
+  "id": "pop-small-in",
+  "start": 1.94,
+  "sync": 0.01,
+  "gain_db": -13
+ },
+ {
+  "t": 3.15,
+  "id": "pop-small-in",
+  "start": 3.14,
+  "sync": 0.01,
+  "gain_db": -13
+ },
+ {
+  "t": 3.95,
+  "id": "pop-small-in",
+  "start": 3.94,
+  "sync": 0.01,
+  "gain_db": -13
+ },
+ {
+  "t": 4.67,
+  "id": "riser-1s-soft",
+  "start": 3.688,
+  "sync": 0.982,
+  "gain_db": -8
+ },
+ {
+  "t": 4.67,
+  "id": "shimmer-medium-sparkle",
+  "start": 4.659,
+  "sync": 0.011,
+  "gain_db": -6
+ },
+ {
+  "t": 4.7,
+  "id": "tone-ding-high",
+  "start": 4.7,
+  "sync": 0,
+  "gain_db": -10
+ }
+]
