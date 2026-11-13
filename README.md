@@ -82,3 +82,8 @@ The label on the monitor's bottom bezel is the video title (`CINE_TITLE` env var
 Subtle blind-light stripes (wall `0.70 + 0.28*band`), film grain sigma 0.012, monitor scaled 1.10,
 camera sway 0.6x, wall typing 17 characters/second, quiet room sound
 (noise 0.006, hum 0.003), 1.5x supersampled 3D canvas and 1.5x supersampled screen texture.
+
+## New: low-poly 3D style (Blender), added 2026-11-13
+A second, newer look lives in [`low_poly_3d/`](low_poly_3d/): a low-poly 3D desk scene rendered in Blender with a
+faceless guy, Claude the robot on the monitor, TikTok-style word-highlight captions and CC0 sound effects.
+It is separate from the CRT renderer above. See [`low_poly_3d/README.md`](low_poly_3d/README.md).
