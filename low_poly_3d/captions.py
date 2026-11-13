@@ -10,7 +10,7 @@ NAME = os.environ.get("REEL_NAME", "day1_reel")
 SCALE = 2                      # 540x960 -> 1080x1920
 
 # word timings in seconds: (word, start, end, speaker)
-G, C = "guy", "claude"
+G, C = "cam", "claude"
 WORDS = [
     ("WHY", 0.10, 0.40, G), ("ARE", 0.40, 0.60, G), ("MY", 0.60, 0.80, G),
     ("PHOTOS", 0.80, 1.20, G), ("GRAINY?", 1.20, 1.75, G),
@@ -22,7 +22,7 @@ WORDS = [
 CHUNKS = [(0, 3), (3, 5), (5, 7), (7, 9), (9, 12)]
 
 STYLE = {
-    G: dict(name="YOU", hi=(255, 226, 60), tag=(255, 226, 60), tagtxt=(20, 20, 20)),
+    G: dict(name="CAM", hi=(255, 226, 60), tag=(255, 226, 60), tagtxt=(20, 20, 20)),
     C: dict(name="CLAUDE", hi=(255, 140, 40), tag=(255, 140, 40), tagtxt=(20, 20, 20)),
 }
 
