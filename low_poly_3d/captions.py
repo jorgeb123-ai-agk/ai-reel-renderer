@@ -55,7 +55,7 @@ for i, fp in enumerate(frames):
         st = STYLE[spk]
         ws = WORDS[a:b]
         # layout: measure at base size
-        gap = 28
+        gap = 40
         f0 = font(BASE)
         tot0 = sum(f0.getlength(w[0]) for w in ws) + gap * (len(ws) - 1)
         fit = min(1.0, (W * 0.88) / (tot0 * 1.1))
@@ -76,7 +76,7 @@ for i, fp in enumerate(frames):
             cx = x + wd / 2
             # highlight box behind the active word
             if active:
-                pad = 16
+                pad = 10
                 d.rounded_rectangle([cx - wl / 2 - pad, y - sz * 0.62 - pad * 0.4, cx + wl / 2 + pad, y + sz * 0.5 + pad * 0.4], radius=22, fill=st["hi"])
                 col, stroke = (20, 20, 20), None
                 d.text((cx, y), word, font=ft, fill=col, anchor="mm")
